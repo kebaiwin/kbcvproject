@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>数字识别绘图板</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+
+    <!-- 配置Tailwind自定义颜色和字体 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#165DFF',
+                        secondary: '#6B7280',
+                        accent: '#3B82F6',
+                        neutral: '#F3F4F6',
+                        dark: '#1F2937'
+                    },
+                    fontFamily: {
+                        inter: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .canvas-shadow {
+                box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            }
+            .btn-hover {
+                @apply transition-all duration-300 hover:shadow-lg hover:-translate-y-1;
+            }
+            .result-appear {
+                animation: fadeIn 0.5s ease-in-out;
+            }
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen font-inter text-dark">
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
+        <!-- 标题区域 -->
+        <div class="text-center mb-8">
+            <h1 class="text-[clamp(2rem,5vw,3rem)] font-bold text-primary mb-2">yolo11 数字识别绘图板</h1>
+            <p class="text-secondary text-lg">在画布上绘制一个数字 (0-9)，然后点击预测按钮</p>
+        </div>
+
+        <!-- 主要内容区域 -->
+        <div class="bg-white rounded-xl p-6 shadow-xl mb-8">
+            <!-- 画布区域 -->
+            <div class="flex flex-col md:flex-row gap-6 items-center">
+                <!-- 左侧：绘图区 -->
+                <div class="w-full md:w-2/3">
+                    <div class="relative">
+                        <canvas id="draw" class="w-full aspect-square bg-black rounded-lg canvas-shadow cursor-crosshair"></canvas>
+                        <div id="drawing-guide" class="absolute inset-0 bg-black/40 rounded-lg flex items-center justify-center text-white text-xl pointer-events-none">
+                            <p>在此绘制数字</p>
+                        </div>
+                    </div>
+
+                    <!-- 工具提示 -->
+                    <div class="mt-4 text-sm text-secondary flex items-center justify-center">
+                        <i class="fa fa-mouse-pointer mr-2"></i>
+                        <span>使用鼠标或触控屏绘制</span>
+                    </div>
+                </div>
+
+                <!-- 右侧：结果区 -->
+                <div class="w-full md:w-1/3 bg-neutral rounded-lg p-6 h-full">
+                    <h2 class="text-xl font-semibold mb-4 text-center">识别结果</h2>
+                    <div id="result-container" class="flex flex-col items-center justify-center h-48 bg-white rounded-lg shadow-inner">
+                        <div id="info" class="text-center hidden">
+                            <p class="text-secondary mb-2">识别结果为</p>
+                            <div class="flex items-center justify-center">
+                                <span id="result" class="text-[clamp(2.5rem,5vw,4rem)] font-bold text-primary result-appear">?</span>
+                                <span class="ml-2 text-lg text-secondary">概率:</span>
+                                <span id="probability" class="text-xl font-semibold text-primary result-appear">--%</span>
+                            </div>
+                        </div>
+                        <div id="no-result" class="text-center">
+                            <i class="fa fa-bar-chart text-4xl text-gray-300 mb-3"></i>
+                            <p class="text-gray-400">绘制数字后点击预测</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 按钮区域 -->
+            <div class="flex justify-center mt-8 gap-4">
+                <button id="predict" type="button" class="bg-primary hover:bg-primary/90 text-white font-medium py-3 px-8 rounded-lg btn-hover flex items-center">
+                    <i class="fa fa-magic mr-2"></i> 预测
+                </button>
+                <button id="reset" type="button" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium py-3 px-8 rounded-lg btn-hover flex items-center">
+                    <i class="fa fa-refresh mr-2"></i> 重置
+                </button>
+            </div>
+        </div>
+
+        <!-- 底部信息 -->
+        <div class="text-center text-secondary text-sm">
+            <p>使用深度学习技术实时识别手写数字</p>
+            <div class="mt-2">
+                <i class="fa fa-spinner fa-spin text-primary" id="loading-indicator" style="display: none;"></i>
+                <span id="status-message"></span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 页面加载完成后执行
+        document.addEventListener('DOMContentLoaded', function() {
+            // 获取DOM元素
+            let canvas = document.getElementById('draw');
+            let ctx = canvas.getContext('2d');
+            let predictBtn = document.getElementById('predict');
+            let resetBtn = document.getElementById('reset');
+            let infoDiv = document.getElementById('info');
+            let noResultDiv = document.getElementById('no-result');
+            let resultSpan = document.getElementById('result');
+            let probabilitySpan = document.getElementById('probability');
+            let drawingGuide = document.getElementById('drawing-guide');
+            let loadingIndicator = document.getElementById('loading-indicator');
+            let statusMessage = document.getElementById('status-message');
+
+            // 设置画布尺寸（考虑响应式）
+            function resizeCanvas() {
+                const container = canvas.parentElement;
+                const containerWidth = container.clientWidth;
+
+                // 设置Canvas的实际像素尺寸（与显示尺寸一致）
+                canvas.width = containerWidth;
+                canvas.height = containerWidth;
+
+                // 重置画布内容
+                resetCanvas();
+            }
+
+            // 初始化画布
+            function resetCanvas() {
+                ctx.fillStyle = "black";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                infoDiv.classList.add('hidden');
+                noResultDiv.classList.remove('hidden');
+                drawingGuide.classList.remove('hidden');
+                statusMessage.textContent = '';
+            }
+
+            // 调整画布尺寸以适应容器
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            // 绘图状态
+            let painting = false;
+            let lastX = 0;
+            let lastY = 0;
+
+            // 笔触设置
+            const strokeWidth = 24; // 笔触粗细
+
+            // 开始绘制
+            function startPosition(e) {
+                painting = true;
+                drawingGuide.classList.add('hidden');
+
+                // 获取鼠标/触摸位置
+                const { offsetX, offsetY } = getCanvasCoordinates(e);
+                [lastX, lastY] = [offsetX, offsetY];
+
+                draw(e);
+            }
+
+            // 结束绘制
+            function endPosition() {
+                painting = false;
+                ctx.beginPath();
+            }
+
+            // 绘制
+            function draw(e) {
+                if (!painting) return;
+
+                ctx.lineWidth = strokeWidth;
+                ctx.lineCap = 'round';
+                ctx.strokeStyle = 'white';
+
+                // 获取鼠标/触摸位置
+                const { offsetX, offsetY } = getCanvasCoordinates(e);
+
+                ctx.beginPath();
+                ctx.moveTo(lastX, lastY);
+                ctx.lineTo(offsetX, offsetY);
+                ctx.stroke();
+
+                [lastX, lastY] = [offsetX, offsetY];
+            }
+
+            // 辅助函数：获取画布上的坐标（兼容鼠标和触摸事件）
+            function getCanvasCoordinates(event) {
+                const rect = canvas.getBoundingClientRect();
+                let x, y;
+
+                if (event.type.includes('mouse')) {
+                    x = event.clientX - rect.left;
+                    y = event.clientY - rect.top;
+                } else if (event.type.includes('touch')) {
+                    x = event.touches[0].clientX - rect.left;
+                    y = event.touches[0].clientY - rect.top;
+                }
+
+                // 确保坐标在画布范围内
+                x = Math.max(0, Math.min(x, canvas.width));
+                y = Math.max(0, Math.min(y, canvas.height));
+
+                return { offsetX: x, offsetY: y };
+            }
+
+            // 添加鼠标事件监听
+            canvas.addEventListener('mousedown', startPosition);
+            canvas.addEventListener('mouseup', endPosition);
+            canvas.addEventListener('mouseout', endPosition);
+            canvas.addEventListener('mousemove', draw);
+
+            // 添加触摸事件监听（支持移动设备）
+            canvas.addEventListener('touchstart', startPosition, { passive: true });
+            canvas.addEventListener('touchend', endPosition);
+            canvas.addEventListener('touchcancel', endPosition);
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault(); // 防止页面滚动
+                draw(e);
+            }, { passive: false });
+
+            // 重置按钮
+            resetBtn.addEventListener('click', resetCanvas);
+
+            // 预测按钮
+            predictBtn.addEventListener('click', function() {
+                predictBtn.disabled = true;
+                predictBtn.classList.add('opacity-70');
+                loadingIndicator.style.display = 'inline-block';
+                statusMessage.textContent = '正在分析...';
+
+                // 创建28x28的画布用于模型输入
+                const resizedCanvas = document.createElement('canvas');
+                resizedCanvas.width = 28;
+                resizedCanvas.height = 28;
+                const resizedCtx = resizedCanvas.getContext('2d');
+
+                // 将原始画布内容缩放到28x28
+                resizedCtx.fillStyle = "black";
+                resizedCtx.fillRect(0, 0, resizedCanvas.width, resizedCanvas.height);
+                resizedCtx.drawImage(canvas, 0, 0, resizedCanvas.width, resizedCanvas.height);
+
+                // 预处理图像：居中并调整大小
+                const processedCanvas = preprocessImage(resizedCanvas);
+
+                // 转换为base64格式
+                const dataURL = processedCanvas.toDataURL('image/png');
+                const base64Data = dataURL.split(',')[1];
+
+                // 发送到API（使用fetch替代jQuery.ajax）
+                fetch('/api', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ image: base64Data })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('识别结果:', data);
+
+                    if (data.result !== undefined && data.probability !== undefined) {
+                        resultSpan.textContent = data.result;
+                        probabilitySpan.textContent = (data.probability * 100).toFixed(2) + '%';
+                        infoDiv.classList.remove('hidden');
+                        infoDiv.classList.add('result-appear');
+                        noResultDiv.classList.add('hidden');
+                        statusMessage.textContent = '识别完成';
+                    } else {
+                        statusMessage.textContent = '识别失败，请重试';
+                    }
+                })
+                .catch(error => {
+                    console.error('API请求失败:', error);
+                    statusMessage.textContent = '服务器错误，请稍后再试';
+                })
+                .finally(() => {
+                    predictBtn.disabled = false;
+                    predictBtn.classList.remove('opacity-70');
+                    loadingIndicator.style.display = 'none';
+                });
+            });
+
+            // 图像预处理函数：居中并调整大小
+            function preprocessImage(canvas) {
+                const ctx = canvas.getContext('2d');
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const data = imageData.data;
+
+                // 找到数字的边界
+                let left = canvas.width, right = 0, top = canvas.height, bottom = 0;
+                for (let y = 0; y < canvas.height; y++) {
+                    for (let x = 0; x < canvas.width; x++) {
+                        const index = (y * canvas.width + x) * 4;
+                        if (data[index] > 128) { // 如果不是黑色
+                            left = Math.min(left, x);
+                            right = Math.max(right, x);
+                            top = Math.min(top, y);
+                            bottom = Math.max(bottom, y);
+                        }
+                    }
+                }
+
+                // 如果没有检测到笔画，返回原始图像
+                if (left >= right || top >= bottom) {
+                    return canvas;
+                }
+
+                // 计算边界框的尺寸
+                const width = right - left + 1;
+                const height = bottom - top + 1;
+
+                // 创建一个新的画布用于居中的图像
+                const newCanvas = document.createElement('canvas');
+                const size = Math.max(width, height);
+                newCanvas.width = size;
+                newCanvas.height = size;
+                const newCtx = newCanvas.getContext('2d');
+
+                // 将数字居中放置
+                newCtx.fillStyle = "black";
+                newCtx.fillRect(0, 0, newCanvas.width, newCanvas.height);
+                newCtx.drawImage(
+                    canvas,
+                    left, top, width, height,
+                    (size - width) / 2, (size - height) / 2, width, height
+                );
+
+                return newCanvas;
+            }
+        });
+    </script>
+</body>
+</html>
